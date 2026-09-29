@@ -9,6 +9,7 @@ import (
 
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/embedded"
 	endpointconfig "github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/config"
+	"gopkg.in/yaml.v3"
 )
 
 type RuntimeOptions struct {
@@ -171,6 +172,50 @@ func endpointCommandPrefix(platform, binaryPath, logPath, configPath string) str
 // that grows a per-runtime branch, and the detection side already accepts both spellings.
 func hookCommandQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
+}
+
+// IsEndpointHookCommand is isEndpointHookCommand for discovery and inventory, which report on the
+// same files and must not keep a marker of their own: they once matched only the
+// `BEACON_ENDPOINT_MODE=1` prefix, and reported every flags-form install as missing. An empty
+// platform accepts a Beacon hook for any platform.
+func IsEndpointHookCommand(command, platform string) bool {
+	return isEndpointHookCommand(command, platform)
+}
+
+// ContainsEndpointHookCommand reports whether any "command" value anywhere in a JSON or YAML
+// config is a Beacon endpoint hook for platform. It reads only "command" values, so Beacon's
+// strings elsewhere in the file (a note, a comment) do not count as an install. Unparseable data
+// reports false.
+func ContainsEndpointHookCommand(data []byte, platform string) bool {
+	var root any
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return false
+	}
+	return containsEndpointHookCommand(root, platform)
+}
+
+func containsEndpointHookCommand(node any, platform string) bool {
+	switch typed := node.(type) {
+	case map[string]any:
+		for key, value := range typed {
+			if command, ok := value.(string); ok && key == "command" {
+				if isEndpointHookCommand(command, platform) {
+					return true
+				}
+				continue
+			}
+			if containsEndpointHookCommand(value, platform) {
+				return true
+			}
+		}
+	case []any:
+		for _, value := range typed {
+			if containsEndpointHookCommand(value, platform) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // isEndpointHookCommand decides whether a command already in a runtime's config is one Beacon wrote.
