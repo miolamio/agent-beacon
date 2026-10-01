@@ -1005,7 +1005,9 @@ func beaconManaged(item candidate, data []byte) bool {
 	text := string(data)
 	switch item.runtime {
 	case "claude_code", "cursor", "antigravity_cli", "vscode", "factory", "hermes", "devin-cli", "devin-desktop":
-		if strings.Contains(text, "BEACON_ENDPOINT_MODE=1") {
+		// Both spellings the installer has written: the old inline prefix, and the --log/--config
+		// flags it writes now, read through the installer's own recognizer.
+		if strings.Contains(text, "BEACON_ENDPOINT_MODE=1") || hooks.ContainsEndpointHookCommand(data, "") {
 			return true
 		}
 	case "opencode":

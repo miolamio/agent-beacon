@@ -1223,3 +1223,30 @@ func TestSnapshotDigestIgnoresVolatileStateFileChurn(t *testing.T) {
 		t.Fatal("an edit to settings.json must still change the digest")
 	}
 }
+
+// The installer writes hook settings as --log/--config flags rather than a
+// `BEACON_ENDPOINT_MODE=1` prefix, so the inventory must recognize that form or it reports every
+// current install of these runtimes as not Beacon-managed.
+func TestBeaconManagedRecognizesFlagsFormHooks(t *testing.T) {
+	command := `'/Users/u/.beacon/endpoint/hooks/beacon-hooks' --platform %s --log '/Users/u/.beacon/endpoint/logs/runtime.jsonl' --config '/Users/u/.beacon/endpoint/config.json' pre-tool`
+	for runtime, platform := range map[string]string{
+		"claude_code":     "claude",
+		"cursor":          "cursor",
+		"antigravity_cli": "antigravity",
+		"devin-cli":       "devin-cli",
+		"devin-desktop":   "devin-desktop",
+	} {
+		quoted, err := json.Marshal(strings.ReplaceAll(command, "%s", platform))
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":` + string(quoted) + `}]}]}}`
+		if !beaconManaged(candidate{runtime: runtime}, []byte(body)) {
+			t.Errorf("beaconManaged(%s) = false for a flags-form Beacon hook", runtime)
+		}
+		foreign := `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"cmux hooks cursor agent-response"}]}]}}`
+		if beaconManaged(candidate{runtime: runtime}, []byte(foreign)) {
+			t.Errorf("beaconManaged(%s) = true for a foreign hook", runtime)
+		}
+	}
+}
