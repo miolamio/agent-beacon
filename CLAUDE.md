@@ -1,6 +1,8 @@
 # CLAUDE.md
 
-Guidance for Claude Code and other coding agents working in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+`AGENTS.md` and `CONTRIBUTING.md` cover the same checks from a contributor's angle; `beacon-sandbox/AGENTS.md`
+is the manual for end-to-end verification.
 
 ## Project Scope
 
@@ -76,10 +78,61 @@ Current non-goals unless explicitly requested:
 - Direct hosted integrations for Datadog, Snowflake, Chronicle, Panther, or other SIEM destinations beyond explicitly supported local/customer-managed forwarding patterns and the opt-in Asymptote Managed path.
 - Dependency vulnerability scanning or package security remediation.
 
+## Architecture At A Glance
+
+Every capture path ends in the same local JSONL runtime log (`~/.beacon/endpoint/logs/runtime.jsonl`
+in user mode), and everything downstream (dashboard, `scan`, `token-usage`, handoff, git links,
+Vector/Filebeat forwarding) reads that log:
+
+- **Hook runtimes** invoke `beacon-hooks --platform <runtime>`, which maps the payload into the
+  shared event schema and appends a line.
+- **Plugin runtimes** (OpenCode, Cline, Pi family, OpenClaw) run a Beacon-managed TypeScript plugin
+  that spawns `beacon-hooks` with the same payload shapes, so plugin and hook paths share mappers.
+- **OTLP runtimes** (Claude Code, Codex, Copilot, browser extension) export to the local
+  `beacon-otelcol` collector, whose `beaconjson` exporter writes the same schema.
+- **Poll backfill** (`beacon endpoint <runtime> sync`) reads a runtime's own session store
+  (`cli/beacon/internal/*session`) and writes events marked `harness.collection_method=poll`.
+
+`pkg/asymptoteobserve` is the shared contract under all of these. `cli/beacon` embeds the
+`beacon-hooks` binary (`internal/embedded/hooks.bin`, built by `make build-hooks-current`) and the
+plugin sources, and installs them into each runtime's config.
+
+The Go code is split into separate modules with no `go.work`: `cli/beacon`, `cli/beacon-hooks`,
+`collector-builder/exporter/beaconjsonexporter`, `pkg/asymptoteobserve`, and `beacon-sandbox`.
+Run Go commands from inside the module you are changing. The first three import
+`pkg/asymptoteobserve` through a relative `replace`, so edits there take effect immediately in all three.
+
 ## Common Commands
 
-Run tests for the public CLI. Build the embedded hooks binary first — several tests
-require a real one and fail against the checked-in placeholder:
+Run a single test or package (from the module directory):
+
+```bash
+cd cli/beacon
+go test ./internal/handoff/ -run TestRegistryIsConsistent -v
+cd ../beacon-hooks
+go test ./cmd/ -run Goose -v
+```
+
+Format and lint the CLI (`golangci-lint` required for lint):
+
+```bash
+cd cli/beacon
+make fmt
+make lint
+```
+
+Verify a capture change against a real Claude Code session (Linux sandbox; each scenario costs
+real money, so tell the user before running one; `doctor` is free):
+
+```bash
+cd beacon-sandbox
+go run ./cmd/beacon-sandbox doctor
+go run ./cmd/beacon-sandbox run --scenario s02-bash-command
+```
+
+Run tests for the public CLI. Build the embedded hooks binary first. `internal/embedded/hooks.bin`
+is gitignored, so on a fresh clone every package that imports it fails with `pattern hooks.bin: no
+matching files found`, and several tests fail against the placeholder `make ensure-placeholder` writes:
 
 ```bash
 cd cli/beacon
